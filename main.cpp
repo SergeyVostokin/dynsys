@@ -1,17 +1,18 @@
 #include "templet.hpp"
+
 #include <random>
 #include <set>
 #include <iostream>
 
 class bag_of_tasks:public templet::globj{
 public:
-    bag_of_tasks(templet::wal&l):globj(l) { 
-        init(); _rand.seed(std::time(nullptr));}
+    bag_of_tasks(templet::wal&l):globj(l) {
+		std::random_device rd;_rand.seed(rd());init(); }
     void resize(unsigned size){
         update(_resize, [&](std::ostream&out) {
             out << size;
 		},
-		[this](std::istream&in) {
+		[this](std::istream&in, std::ostream&) {
             unsigned size; in >> size;
             //----------------------------------------
             N.resize(size); NxN.resize(size);
@@ -23,7 +24,7 @@ public:
         update(_add, [&](std::ostream&out) {
             out << id << " " << n;
 		},
-		[this](std::istream&in) {
+		[this](std::istream&in, std::ostream&) {
             unsigned id; int n; in >> id >> n;
             //----------------------------------------
             N[id]=n; unprocessed.insert(id);
@@ -49,7 +50,7 @@ public:
         update(_put, [&](std::ostream&out) {
             out << id << " " << nxn;
 		},
-		[this](std::istream&in) {
+		[this](std::istream&in, std::ostream&) {
             unsigned id; int nxn; in >> id >> nxn;
             //----------------------------------------
             unprocessed.erase(id);
@@ -64,6 +65,7 @@ public:
 private:
     std::set<unsigned> unprocessed;
     bool _ready_to_get;
+private:
     std::minstd_rand _rand;
     unsigned get_rand_unprocessed(){
         int selected = _rand() % unprocessed.size();
@@ -81,36 +83,33 @@ private:
 
 int main()
 {
-    const int NUM_PROC = 1;
+    const int NUM_PROC = 10;
     const int SIZE = 10;
 
     templet::wal a_wal;
-    templet::job a_job(SIZE);
+    templet::job a_job(NUM_PROC);
 
-//    a_job.run([&a_wal,&a_job](unsigned pid){
-//        bag_of_tasks tbag(a_wal);
+    a_job.run([&](unsigned pid){
 
-//        if(pid==0 && !tbag.ready_to_get()){// in master 'process'
-//            tbag.resize(SIZE);
-//            for(int i=0;i<SIZE;i++) tbag.add(i,i);
-//        }
-//        while(!tbag.ready_to_get())/*wait*/;
+        bag_of_tasks tbag(a_wal);
+
+        if(pid==0 && !tbag.ready_to_get()){// in master 'process'
+            tbag.resize(SIZE);
+            for(int i=0;i<SIZE;i++) tbag.add(i,i+1);
+        }
+        while(!tbag.ready_to_get())/*wait*/;
     
-//        unsigned id; int N, NxN; 
-//        while(tbag.get(id,N)){
-//            NxN = N*N;
-//            a_job.delay(1.0);//simulate a workload
-//            tbag.put(id,NxN);
-//        }
+        unsigned id; int N, NxN; 
+        while(tbag.get(id,N)){
+            NxN = N*N;
+            a_job.delay(1.0);//simulate workload
+            tbag.put(id,NxN);
+        }
     
-//        if(pid==0){// in master 'process'
-//            for(int i=0;i<SIZE;i++)
-//                std::cout << tbag.N[i] <<"^2 = " << tbag.NxN[i] << std::endl;
-//        }             
-//    });
-
-    a_job.run([&a_job](unsigned pid){
-        a_job.delay(1.0);
+        if(pid==0){// in master 'process'
+            for(int i=0;i<SIZE;i++)
+                std::cout << tbag.N[i] <<"^2 = " << tbag.NxN[i] << std::endl;
+        }             
     });
 
     std::cout << "Duration with " << NUM_PROC << 

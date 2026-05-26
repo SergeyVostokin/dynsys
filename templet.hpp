@@ -5,6 +5,7 @@
 #include <chrono>
 #include <mutex>
 #include <atomic>
+#include <vector>
 
 namespace templet {
 
@@ -13,7 +14,7 @@ namespace templet {
 		virtual void write(unsigned& index, unsigned tag, const std::string& blob){
             std::unique_lock<std::mutex> lock(mut);
 			log.push_back(std::pair<unsigned, std::string>(tag, blob));
-			index = log.size() - 1;
+			index = (unsigned)(log.size() - 1);
         }
 		virtual bool read(unsigned index, unsigned& tag, std::string& blob){
             std::unique_lock<std::mutex> lock(mut);
@@ -25,63 +26,63 @@ namespace templet {
 		std::mutex mut;
 	};
 
-    class globj {
+	class globj {
 	public:
-		globj(wal&l) :_wal(l), wal_index(0), is_init(false) {}
-		void init() { is_init = true; on_init(); is_init = false; }
-
-		void update() {
-			unsigned tag; std::string blob;
-			for (; _wal.read(wal_index, tag, blob); wal_index++) {
-				changer& changer = changers[tag];
-				if (changer.use_input) { std::istringstream in(blob); changer.on_update_input(in); }
-				else changer.on_update();
-			}
-		}
-		void update(const unsigned id,
-			std::function<void(void)>update) {
-			if (is_init) 
-				changers[id] = changer(update);
-			else {
-				std::string empty; unsigned index;
-				_wal.write(index, id, empty);
-				globj::update(index);
-			}
-		}
-		void update(const unsigned id,
-			std::function<void(std::ostream&)>save,
-			std::function<void(std::istream&)>update) {
-			if (is_init)
-				changers[id] = changer(update);
-			else {
-				std::ostringstream out; unsigned index;
-				save(out); _wal.write(index, id, out.str());
-				globj::update(index);
-			}
-		}
+		globj(wal&w):_wal(w), _wal_index(0), _is_init(false) {}
+		void init() { _is_init = true; on_init(); _is_init = false; }
 	protected:
 		virtual void on_init() = 0;
-	private:
-		void update(unsigned index) {
-			unsigned tag; std::string blob;
-			for (; wal_index <= index && _wal.read(wal_index, tag, blob); wal_index++) {
-				changer& changer = changers[tag];
-				if (changer.use_input) { std::istringstream in(blob); changer.on_update_input(in); }
-				else changer.on_update();
+	public:
+		void update(
+			unsigned id,
+			std::function<void(std::ostream&)> save,
+			std::function<void(std::istream&, std::ostream&)> update,
+			std::function<void(std::istream&)> load = [](std::istream&) {}
+		) {
+			if (_is_init)
+				_updaters[id] = update;
+			else {
+				std::ostringstream out; unsigned index;
+				save(out); _wal.write(index, id, out.str()); out.clear();
+
+				unsigned tag; std::string blob;
+				for (; _wal_index < index && _wal.read(_wal_index, tag, blob); _wal_index++) {
+					auto& updater = _updaters[tag];
+					{
+						std::istringstream in(blob);
+						updater(in, out); out.clear();
+					}
+				}
+				_wal.read(_wal_index, tag, blob); _wal_index++;
+				{
+					auto& updater = _updaters[tag];
+					std::istringstream in(blob); std::stringstream out;
+					updater(in, out); load(out);
+				}
 			}
 		}
-		struct changer {
-			changer(std::function<void(std::istream&)>update) :on_update_input(update), use_input(true){}
-			changer(std::function<void(void)>update) :on_update(update), use_input(false) {}
-			changer() : use_input(false), on_update_input([](std::istream&){}), on_update([](){}){}
-			bool use_input;
-			std::function<void(std::istream&)>on_update_input;
-			std::function<void(void)>on_update;
-		};
+		inline void update(
+			unsigned id,
+			std::function<void(std::istream&, std::ostream&)> update,
+			std::function<void(std::istream&)> load = [](std::istream&) {}
+		) {
+			globj::update(id, [](std::ostream&) {}, update, load);
+		}
+		void update() {
+			unsigned tag; std::string blob; std::ostringstream out;
+			for (; _wal.read(_wal_index, tag, blob); _wal_index++) {
+				auto& updater = _updaters[tag];
+				{ 
+					std::istringstream in(blob); 
+					updater(in, out); out.clear();
+				}
+			}
+		}
+	private:
 		wal& _wal;
-		unsigned wal_index;
-		std::map<unsigned,changer> changers;
-		bool is_init;
+		unsigned _wal_index;
+		bool _is_init;
+		std::map<unsigned,std::function<void(std::istream&, std::ostream&)>> _updaters;
 	};
 
     class job {
