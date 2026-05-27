@@ -85,10 +85,51 @@ namespace templet {
 		std::map<unsigned,std::function<void(std::istream&, std::ostream&)>> _updaters;
 	};
 
+    class map {
+	public:
+		map(wal&){}
+		void init(unsigned size){}
+        inline void operator()(
+			std::function<void(unsigned size)> init,
+			std::function<void(unsigned iter)> map,
+			std::function<void(unsigned iter, std::ostream&, bool mapped)> save
+			= [](unsigned, std::ostream&, bool) {},
+			std::function<void(unsigned iter, std::istream&, bool mapped)> load
+			= [](unsigned, std::istream&, bool) {}
+        ){ map::run(init,map,save,load); }
+		void run(
+			std::function<void(unsigned size)> init,
+			std::function<void(unsigned iter)> map,
+			std::function<void(unsigned iter, std::ostream&, bool mapped)> save
+			= [](unsigned, std::ostream&, bool) {},
+			std::function<void(unsigned iter, std::istream&, bool mapped)> load
+			= [](unsigned, std::istream&, bool) {}
+		){}
+	};
+
+    class async {
+	public:
+		async(wal&){}
+        inline void task(
+			std::function<void(std::ostream&)> action,
+			std::function<void(std::istream&)> load
+		){ async::task(false,action,load); }
+		void task(bool local,
+			std::function<void(std::ostream&)> action,
+			std::function<void(std::istream&)> load
+		){}
+		void wait(){}
+	};
+
     class job {
 	public:
 		job(unsigned size):_size(size),_PID(0){}
-
+        job():_size(0),_PID(0){}
+        void init(unsigned size){_size = size;}
+    public:
+        inline void operator()(std::function<void(unsigned pid)> process){
+            job::run(process);
+        }
 		void run(std::function<void(unsigned pid)> process){
             std::vector<std::thread> threads(_size);
             _beg=std::chrono::high_resolution_clock::now();

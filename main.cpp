@@ -86,12 +86,12 @@ int main()
     const int NUM_PROC = 10;
     const int SIZE = 10;
 
-    templet::wal a_wal;
-    templet::job a_job(NUM_PROC);
+    templet::wal wal;
+    templet::job job(NUM_PROC);
 
-    a_job.run([&](unsigned pid){
+    job([&](unsigned pid){
 
-        bag_of_tasks tbag(a_wal);
+        bag_of_tasks tbag(wal);
 
         if(pid==0 && !tbag.ready_to_get()){// in master 'process'
             tbag.resize(SIZE);
@@ -102,7 +102,7 @@ int main()
         unsigned id; int N, NxN; 
         while(tbag.get(id,N)){
             NxN = N*N;
-            a_job.delay(1.0);//simulate workload
+            job.delay(1.0);//simulate workload
             tbag.put(id,NxN);
         }
     
@@ -113,6 +113,6 @@ int main()
     });
 
     std::cout << "Duration with " << NUM_PROC << 
-        " thread(s) is " << a_job.duration() << " seconds." << std::endl;
+        " thread(s) is " << job.duration() << " seconds." << std::endl;
 
 }
