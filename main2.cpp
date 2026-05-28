@@ -2,11 +2,11 @@
 
 #include <iostream>
 
+const int NUM_PROC = 10;
+const int SIZE = 10;
+
 int main()
-{
-    const int NUM_PROC = 10;
-    const int SIZE = 10;
-    
+{  
     templet::wal wal;
     templet::job job(NUM_PROC);
 

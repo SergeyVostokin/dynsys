@@ -2,11 +2,11 @@
 
 #include <iostream>
 
+const int NUM_PROC = 10;
+const int SIZE = 10;    
+
 int main()
 {
-    const int NUM_PROC = 10;
-    const int SIZE = 10;
-    
     templet::wal wal;
     templet::job job(NUM_PROC);
 
@@ -30,8 +30,8 @@ int main()
                 job.delay(1.0);//simulate workload
             },
             [&](unsigned iter, std::ostream& out, bool mapped) {
-                if(!mapped) out << N[iter] << " ";
-                else out << NxN[iter] << " ";
+                if(!mapped) out << N[iter];
+                else out << NxN[iter];
             },
             [&](unsigned iter, std::istream& in, bool mapped) {
                 if(!mapped) in >> N[iter];
