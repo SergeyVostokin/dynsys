@@ -21,14 +21,12 @@ int main()
         async.task( pid==0,
             [&](std::ostream& out){ 
                 out << SIZE << " ";
-                for(int i=0; i<SIZE; i++){ out << (i+1) << " "; }
+                for(int i=0; i<SIZE; i++) out << (i+1) << " ";
             },
 			[&](std::istream& in){ 
                 in >> size; 
                 N.resize(size); NxN.resize(size);
-                for(int i=0; i<size; i++){
-                    int n; in >> n; N[i]=n;
-                }
+                for(int i=0; i<size; i++) in >> N[i];
             }
         );
 
@@ -37,8 +35,8 @@ int main()
         for(int i=0; i<size; i++) async.task(
             [&](std::ostream& out){ 
                 NxN[i] = N[i]*N[i];
-                job.delay(1.0);//simulate workload
-                out << NxN[i] << " ";
+                templet::job::delay(1.0);//simulate workload
+                out << NxN[i];
             },
             [&](std::istream& in){ 
                 in >> NxN[i];
@@ -55,5 +53,4 @@ int main()
 
     std::cout << "Duration with " << NUM_PROC << 
         " thread(s) is " << job.duration() << " seconds." << std::endl;
-
 }

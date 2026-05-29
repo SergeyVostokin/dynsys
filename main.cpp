@@ -103,7 +103,7 @@ int main()
         unsigned id; int N, NxN; 
         while(tbag.get(id,N)){
             NxN = N*N;
-            job.delay(1.0);//simulate workload
+            templet::job::delay(1.0);//simulate workload
             tbag.put(id,NxN);
         }
     
@@ -115,5 +115,4 @@ int main()
 
     std::cout << "Duration with " << NUM_PROC << 
         " thread(s) is " << job.duration() << " seconds." << std::endl;
-
 }

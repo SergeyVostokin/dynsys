@@ -47,10 +47,9 @@ public:
 class worker:public templet::acta::actor{
 public:
     worker():templet::acta::actor(),out(){}
-    void init(templet::acta&acta,templet::job&job){
+    void init(templet::acta&acta){
         templet::acta::actor::init(acta,true);
         out.init(this,[this](){on_out(out);});
-        _job = &job;
     }
     message out;
 private:
@@ -58,7 +57,7 @@ private:
         task(
             [this,&m](std::ostream& out){ 
                 out << m.n*m.n;
-                _job->delay(1.0);//simulate workload
+                templet::job::delay(1.0);//simulate workload
             },
             [this,&m](std::istream& in){ 
                 in >> m.nxn;
@@ -70,7 +69,6 @@ private:
         out.result=false; 
         ask(out);
     }
-    templet::job* _job;
 };
 
 int main()
@@ -85,7 +83,7 @@ int main()
         std::vector<worker> workers(NUM_PROC);
 
         for(int i=0;i<NUM_PROC;i++){
-            workers[i].init(acta,job);
+            workers[i].init(acta);
             a_master.in(workers[i].out);
         }
 

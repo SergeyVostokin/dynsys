@@ -195,7 +195,7 @@ namespace templet {
             for (auto& t : threads) t.join();
             _end=std::chrono::high_resolution_clock::now();
         }
-		void delay(double seconds){
+		static void delay(double seconds){
             std::this_thread::sleep_for(
                 std::chrono::duration<double>(seconds));
         }

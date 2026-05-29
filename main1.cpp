@@ -27,7 +27,7 @@ int main()
             [&](unsigned size){ N.resize(size); NxN.resize(size); },
             [&](unsigned iter){ 
                 NxN[iter] = N[iter]*N[iter];
-                job.delay(1.0);//simulate workload
+                templet::job::delay(1.0);//simulate workload
             },
             [&](unsigned iter, std::ostream& out, bool mapped) {
                 if(!mapped) out << N[iter];
@@ -47,5 +47,4 @@ int main()
 
     std::cout << "Duration with " << NUM_PROC << 
         " thread(s) is " << job.duration() << " seconds." << std::endl;
-
 }
