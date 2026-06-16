@@ -6,30 +6,144 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <cassert>
+#include <iostream>
+
+#if (__cplusplus>=201703L)
+#include <filesystem>
+#endif
 
 namespace templet {
-
-	class wal {
+    class wal {
 	public:
-		virtual void write(unsigned& index, unsigned tag, const std::string& blob){
-            std::unique_lock<std::mutex> lock(mut);
-			log.push_back(std::pair<unsigned, std::string>(tag, blob));
-			index = (unsigned)(log.size() - 1);
-        }
-		virtual bool read(unsigned index, unsigned& tag, std::string& blob){
-            std::unique_lock<std::mutex> lock(mut);
-			if (index < log.size()) { tag = log[index].first; blob = log[index].second; return true; }
+		virtual void write(unsigned& index, unsigned tag, const std::string& blob) = 0;
+		virtual bool read(unsigned index, unsigned& tag, std::string& blob) = 0;
+	};
+
+	class filewal :public wal {
+	public:
+		filewal(const char filename[], bool lazy = true) :filewal(std::string(filename), lazy) {}
+		filewal(const std::string& filename, bool lazy = true) :
+			_current_index(0), _cashed_write(false), _filename(filename), _lazy(lazy) {
+			_file = fopen(_filename.c_str(), "rb");
+			if (!_file) {
+				_file = fopen(_filename.c_str(), "ab");
+				assert(_file && "filewal: cannot open log file");
+				_initial_read = false;
+			}
+			else
+				_initial_read = true;
+		}
+		~filewal() { fclose(_file); }
+
+		void write(unsigned& index, unsigned tag, const std::string& blob) override {
+			assert(!_initial_read && "filewal: access pattern violated");
+
+			size_t ret_code;
+			unsigned ubuf[3];//index,tag,blob size
+
+			ubuf[0] = _current_index; //index
+			ubuf[1] = tag;   //tag
+			ubuf[2] = blob.size(); //blob size
+
+			ret_code = fwrite(ubuf, sizeof(ubuf), 1, _file);
+			assert(ret_code == 1 && "filewal: write error");
+
+			ret_code = fwrite(blob.c_str(), sizeof(char), ubuf[2], _file);
+			assert(ret_code == ubuf[2] && "filewal: write error");
+
+			if (!_lazy) fflush(_file);
+
+			_cashed_tag = tag; _cashed_blob = blob; _cashed_write = true;			
+            index=_current_index; _current_index++;
+		}
+		bool read(unsigned index, unsigned& tag, std::string& blob) override {
+			if (_initial_read) {
+                assert(index == _current_index && "filewal: access pattern violated");
+                
+				size_t ret_code;
+				unsigned ubuf[3];//index,tag,blob size
+
+				ret_code = fread(ubuf, 1, sizeof(ubuf), _file);
+
+				if (ret_code == 0 && feof(_file)) {
+					fclose(_file);
+					_file = fopen(_filename.c_str(), "ab");
+					assert(_file && "filewal: cannot open log file");
+					_initial_read = false;
+					return false;
+				}                
+                
+				assert(ret_code == sizeof(ubuf) && "filewal: read error");
+				assert(ubuf[0] == _current_index && "filewal: integrity is compromised");         
+
+				tag = ubuf[1];//tag
+				blob.resize(ubuf[2]);//size
+                
+				ret_code = fread((void*)blob.c_str(), sizeof(char), ubuf[2], _file);//blob
+                assert(ret_code == ubuf[2] && "filewal: read error");
+
+				_current_index++;
+				return true;
+			}
+			else {// !_initial_read (write)
+				assert((index == _current_index || index == _current_index-1)
+                    && "filewal: access pattern violated");
+
+				if (index == _current_index-1 && _cashed_write) {
+					tag = _cashed_tag; blob = _cashed_blob;
+					return true;
+				}
+				return false;
+			}
+		}
+	private:
+		FILE*_file;
+		std::string _filename;
+		bool _initial_read;
+		unsigned _current_index;
+		bool _cashed_write;
+		unsigned _cashed_tag;
+		std::string _cashed_blob;
+		bool _lazy;
+	private:
+		void truncate_chunk(const std::string& filename, unsigned n) {
+#if (__cplusplus>=201703L)
+			std::filesystem::path p = filename;
+			std::filesystem::resize_file(p, std::filesystem::file_size(p) - n);
+#else
+			assert(!"filewal: the last entry is corrupted");
+#endif
+		}
+	};
+
+	class memwal :public wal {
+	public:
+		void write(unsigned& index, unsigned tag, const std::string& blob) override {
+			std::unique_lock<std::mutex> lock(_mut);
+			_log.push_back(std::pair<unsigned, std::string>(tag, blob));
+			index = (unsigned)(_log.size() - 1);
+		}
+		bool read(unsigned index, unsigned& tag, std::string& blob) override {
+			std::unique_lock<std::mutex> lock(_mut);
+			if (index < _log.size()) { tag = _log[index].first; blob = _log[index].second; return true; }
 			return false;
-        }
+		}
+		void print(std::ostream& out) {
+			for (int i = 0; i < _log.size(); i++) {
+				out << "index:" << i << " tag:" << _log[i].first << std::endl
+					<< "entry:" << _log[i].second << std::endl;
+			}
+		}
 	protected:
-		std::vector<std::pair<unsigned, std::string>> log;
-		std::mutex mut;
+		std::vector<std::pair<unsigned, std::string>> _log;
+		std::mutex _mut;
 	};
 
 	class globj {
 	public:
 		globj(wal&w):_wal(w), _wal_index(0), _is_init(false) {}
-		void init() { _is_init = true; on_init(); _is_init = false; }
+		void init() { _is_init = true; on_init(); _is_init = false; update(); }
 	protected:
 		virtual void on_init() = 0;
 	public:
@@ -42,6 +156,8 @@ namespace templet {
 			if (_is_init)
 				_updaters[id] = update;
 			else {
+				std::unique_lock<std::mutex> lock(_mut);
+
 				std::ostringstream out; unsigned index;
 				save(out); _wal.write(index, id, out.str()); out.clear();
 
@@ -69,7 +185,11 @@ namespace templet {
 			globj::update(id, [](std::ostream&) {}, update, load);
 		}
 		void update() {
-			unsigned tag; std::string blob; std::ostringstream out;
+			std::unique_lock<std::mutex> lock(_mut);
+
+			unsigned tag; std::string blob;
+			std::ostringstream out;
+
 			for (; _wal.read(_wal_index, tag, blob); _wal_index++) {
 				auto& updater = _updaters[tag];
 				{ 
@@ -83,115 +203,22 @@ namespace templet {
 		unsigned _wal_index;
 		bool _is_init;
 		std::map<unsigned,std::function<void(std::istream&, std::ostream&)>> _updaters;
-	};
-
-    class map {
-	public:
-		map(wal&){}
-		void init(unsigned size){}
-        inline void operator()(
-			std::function<void(unsigned size)> init,
-			std::function<void(unsigned iter)> map,
-			std::function<void(unsigned iter, std::ostream&, bool mapped)> save
-			= [](unsigned, std::ostream&, bool) {},
-			std::function<void(unsigned iter, std::istream&, bool mapped)> load
-			= [](unsigned, std::istream&, bool) {}
-        ){ map::run(init,map,save,load); }
-		void run(
-			std::function<void(unsigned size)> init,
-			std::function<void(unsigned iter)> map,
-			std::function<void(unsigned iter, std::ostream&, bool mapped)> save
-			= [](unsigned, std::ostream&, bool) {},
-			std::function<void(unsigned iter, std::istream&, bool mapped)> load
-			= [](unsigned, std::istream&, bool) {}
-		){}
-	};
-
-    class async {
-	public:
-		async(wal&){}
-        inline void task(
-			std::function<void(std::ostream&)> action,
-			std::function<void(std::istream&)> load
-		){ async::task(false,action,load); }
-		void task(bool local,
-			std::function<void(std::ostream&)> action,
-			std::function<void(std::istream&)> load
-		){}
-		void wait(){}
-	};
-
-    class acta {
-	public:
-		acta(wal&){}
-		void run(){}
-		inline void operator()() { acta::run(); }
-		virtual void on_run() {}
-	public:
-		class actor;
-		class message {
-		public:
-            message(){}
-			message(actor&){}
-			message(actor&, std::function<void()> action){}
-			message(actor*){}
-			message(actor*, std::function<void()> action){}
-            void init(actor&){}
-            void init(actor&, std::function<void()> action){}
-            void init(actor*){}
-            void init(actor*, std::function<void()> action){}
-		public:
-			bool operator()(){return false;};// is available now?
-			void cli(actor*,std::function<void()> action){}
-			void srv(actor*,std::function<void()> action){}
-            void cli(actor&,std::function<void()> action){}
-			void srv(actor&,std::function<void()> action){}
-		};
-	public:
-		class actor {
-		public:
-            actor(){}
-			actor(acta&,bool start=false){}
-			actor(acta*,bool start = false){}
-            void init(acta&,bool start = false){}
-            void init(acta*,bool start = false){}
-		public:
-			void ask(message&){}
-			void ask(message*){}
-			void ret(message&){}
-			void ret(message*){}
-			void say(message&){}
-			void say(message*){}
-		public:
-			void task(bool local,
-				std::function<void(std::ostream&)> action,
-				std::function<void(std::istream&)> load
-			){}
-			inline void task(
-				std::function<void(std::ostream&)> action,
-				std::function<void(std::istream&)> load
-			) {
-				actor::task(false,action,load);
-			}
-			void stop(){}
-        protected:
-            virtual void on_start(){}
-		};
+		std::mutex _mut;
 	};
 
     class job {
 	public:
-		job(unsigned size):_size(size),_PID(0){}
-        job():_size(0),_PID(0){}
+		job(unsigned size):_size(size),_taskID(0){}
+        job():_size(std::thread::hardware_concurrency()),_taskID(0){}
         void init(unsigned size){_size = size;}
     public:
-        inline void operator()(std::function<void(unsigned pid)> process){
-            job::run(process);
+        inline void operator()(std::function<void(unsigned taskID)> task){
+            job::run(task);
         }
-		void run(std::function<void(unsigned pid)> process){
+		void run(std::function<void(unsigned taskID)> task){
             std::vector<std::thread> threads(_size);
             _beg=std::chrono::high_resolution_clock::now();
-        	for (auto& t : threads) t = std::thread([&]{process(_PID++);}); 
+        	for (auto& t : threads) t = std::thread([&]{task(_taskID++);}); 
             for (auto& t : threads) t.join();
             _end=std::chrono::high_resolution_clock::now();
         }
@@ -205,7 +232,7 @@ namespace templet {
         }
     private:
         unsigned _size;
-        std::atomic_int _PID = 0;
+        std::atomic_int _taskID = 0;
         std::chrono::time_point<std::chrono::high_resolution_clock> _beg, _end;
 	};
 }

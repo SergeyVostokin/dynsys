@@ -86,12 +86,15 @@ private:
 
 int main()
 {
-    templet::wal wal;
+    //templet::memwal wal;
+    templet::filewal wal("dbase.bin");
+    bag_of_tasks tbag(wal);
+    
     templet::job job(NUM_PROC);
 
     job([&](unsigned pid){
-
-        bag_of_tasks tbag(wal);
+        
+        //bag_of_tasks tbag(wal);  
 
         if(pid==0 && !tbag.ready_to_get()){// in master 'process'
             tbag.resize(SIZE);
@@ -115,4 +118,6 @@ int main()
 
     std::cout << "Duration with " << NUM_PROC << 
         " thread(s) is " << job.duration() << " seconds." << std::endl;
+
+    //wal.print(std::cout);
 }

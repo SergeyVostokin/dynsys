@@ -1,2 +1,2 @@
 # dynsys
-dynamic system modeling
+Dynamical systems modeling
