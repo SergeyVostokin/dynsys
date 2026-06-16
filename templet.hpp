@@ -9,10 +9,6 @@
 #include <cassert>
 #include <iostream>
 
-#if (__cplusplus>=201703L)
-#include <filesystem>
-#endif
-
 namespace templet {
     class wal {
 	public:
@@ -106,15 +102,6 @@ namespace templet {
 		unsigned _cashed_tag;
 		std::string _cashed_blob;
 		bool _lazy;
-	private:
-		void truncate_chunk(const std::string& filename, unsigned n) {
-#if (__cplusplus>=201703L)
-			std::filesystem::path p = filename;
-			std::filesystem::resize_file(p, std::filesystem::file_size(p) - n);
-#else
-			assert(!"filewal: the last entry is corrupted");
-#endif
-		}
 	};
 
 	class memwal :public wal {
