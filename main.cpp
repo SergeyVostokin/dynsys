@@ -1,123 +1,103 @@
 #include "templet.hpp"
 
-#include <random>
-#include <set>
 #include <iostream>
 
-const int NUM_PROC = 10;
-const int SIZE = 10;
-
-class bag_of_tasks:public templet::globj{
+class counter :public templet::glob {
 public:
-    bag_of_tasks(templet::wal&l):globj(l) {
-		std::random_device rd;_rand.seed(rd());init(); }
-    void resize(unsigned size){//---------------------
-        update(_resize, [&](std::ostream&out) {
-            out << size;
-		},
-		[this](std::istream&in, std::ostream&) {
-            unsigned size; in >> size;
-            //----------------------------------------
-            N.resize(size); NxN.resize(size);
-            _unprocessed.clear(); _ready_to_get = false;
-            //----------------------------------------
-		});   
-    }
-    void add(unsigned id,int n){//--------------------
-        update(_add, [&](std::ostream&out) {
-            out << id << " " << n;
-		},
-		[this](std::istream&in, std::ostream&) {
-            unsigned id; int n; in >> id >> n;
-            //----------------------------------------
-            N[id]=n; _unprocessed.insert(id);
-            if(_unprocessed.size()==N.size()) _ready_to_get = true;
-            //----------------------------------------
-		});     
-    }
-    bool ready_to_get(){//------------------------
-        update();
-        //----------------------------------------
-        return _ready_to_get;
-        //----------------------------------------
-    }
-    bool get(unsigned& id, int& n){//-------------
-        update();
-        //----------------------------------------
-        if(_unprocessed.empty())return false;
-        id = get_rand_unprocessed(); n = N[id];
-        return true;
-        //----------------------------------------
-    }
-    void put(unsigned id,int nxn){//-----------------
-        update(_put, [&](std::ostream&out) {
-            out << id << " " << nxn;
-		},
-		[this](std::istream&in, std::ostream&) {
-            unsigned id; int nxn; in >> id >> nxn;
-            //----------------------------------------
-            _unprocessed.erase(id);
-            NxN[id]=nxn;
-            //----------------------------------------
-		});  
-    }
-    //----------------------------------------
+	counter(templet::wal& wal) :glob(wal),_counter(0),_go_flag(false) { init(); }
+    counter(const std::string& filename) :glob(filename),_counter(0),_go_flag(false) { init(); }
 public:
-    std::vector<int> N;
-    std::vector<int> NxN;
-private:
-    std::set<unsigned> _unprocessed;
-    bool _ready_to_get;
-private:
-    std::minstd_rand _rand;
-    unsigned get_rand_unprocessed(){
-        int selected = _rand() % _unprocessed.size();
-		auto it = _unprocessed.begin(); 
-        for (int i = 0; i != selected; i++, it++) {}
-        return *it;
+    void go(){ //{_go_flag = true;}
+		update(_go,
+			[this](std::istream&,std::ostream&) {
+                _go_flag = true;
+			});
     }
-    //----------------------------------------
-private:
-	enum {_resize,_add,_put};
-	void on_init() override {
-		resize(0); add(0,0); put(0,0);
+    void wait_go(){
+        update();
+        while(!_go_flag){
+            templet::env::delay(0.5);
+            update();
+        }
+    }
+	unsigned inc(unsigned count) { //{_counter += count;return _counter;}
+        unsigned ret;
+		update(_inc, [&](std::ostream&out) {
+			out << count;
+			},
+			[this](std::istream&in, std::ostream&out) {
+				unsigned count; in >> count;
+				_counter += count;
+                out << _counter;
+			},
+            [&](std::istream&in) {
+    			in >> ret;
+		});
+        return ret;
 	}
+private:
+	unsigned _counter;
+    bool _go_flag;
+private:
+	enum { _go,_inc };
+	void on_init() override { go(); inc(0); }
 };
 
-int main()
-{
-    //templet::memwal wal;
-    templet::filewal wal("dbase.bin");
-    bag_of_tasks tbag(wal);
-    
-    templet::job job(NUM_PROC);
+int main(int argc, char* argv[])
+{   
+    bool master=true;
+    templet::cfg cfg;
+    templet::env env(cfg);
 
-    job([&](unsigned pid){
+    cfg.file(std::string("wal.dat"));
+    cfg.pool(10);// set thread pool size or '0' - for defaul size
+    
+    if(argc==1){ // local execution without networking
+        master = true;    
+        // uncomment for local loop testing with networking
+        // cfg.srv();cfg.cli(std::string("127.0.0.1"),51717);
+    }
+    else if(argc==2){// server 
+        master = true;
+        cfg.srv(std::string("0.0.0.0"),static_cast<int>(std::stoul(argv[1])));
+    }
+    else if(argc==3){// client
+        master = false;
+        cfg.cli(std::string(argv[1]),static_cast<int>(std::stoul(argv[2])));
+    }
+    else{
+        std::cout << "error: too many arguments";
+        return EXIT_FAILURE;
+    }
+    
+    std::mutex mut;
+    env([&](unsigned pid,templet::wal& wal) {
         
-        //bag_of_tasks tbag(wal);  
+        counter a_counter(wal); //using 'a_counter' as a global object
 
-        if(pid==0 && !tbag.ready_to_get()){// in master 'process'
-            tbag.resize(SIZE);
-            for(int i=0;i<SIZE;i++) tbag.add(i,i+1);
+        if (pid == 0 && master){ // in master 'process'
+            std::cout << "when all workers are ready, enter something here >";
+            std::string str; std::cin >> str;
+            a_counter.go();
         }
-        
-        while(!tbag.ready_to_get())/*wait*/;
-    
-        unsigned id; int N, NxN; 
-        while(tbag.get(id,N)){
-            NxN = N*N;
-            templet::job::delay(1.0);//simulate workload
-            tbag.put(id,NxN);
+        else{ // in worker 'process'
+            if(!master && pid==0) std::cout 
+                << "in a worker process, waiting for the master process to start..." 
+                << std::endl;
+            a_counter.wait_go();
         }
-    
-        if(pid==0){// in master 'process'
-            for(int i=0;i<SIZE;i++)
-                std::cout << tbag.N[i] <<"^2 = " << tbag.NxN[i] << std::endl;
-        }             
+            
+        a_counter.inc(1); templet::env::delay(1.0); 
+        { 
+            std::unique_lock<std::mutex> lock(mut);
+            std::cout << "local process #" << pid << " finished" << std::endl;
+        }
     });
 
-    std::cout << "Duration with " << NUM_PROC << 
-        " thread(s) is " << job.duration() << " seconds." << std::endl;
-
-    //wal.print(std::cout);
-}
+    if(master){
+        counter a_counter(std::string("wal.dat")); //using 'a_counter' as a local object
+        std::cout << "total number of processes: " << a_counter.inc(0) << std::endl;
+    }
+    
+    return EXIT_SUCCESS;
+ }
