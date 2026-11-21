@@ -1,3 +1,1 @@
-apt update
-apt install g++-mingw-w64
 curl -LO https://github.com/yhirose/cpp-httplib/raw/refs/tags/latest/httplib.h
