@@ -13,7 +13,7 @@ public:
                 _go_flag = true;
 			});
     }
-    void wait_go(){
+    void wait_go(){// while(!_go_flag);
         update();
         while(!_go_flag){
             templet::env::delay(0.5);
@@ -76,7 +76,7 @@ int main(int argc, char* argv[])
         counter a_counter(wal); //using 'a_counter' as a global object
 
         if (pid == 0 && master){ // in master 'process'
-            std::cout << "when all workers are ready, enter something here >";
+            std::cout << "when all workers are ready to do increments, enter something here >";
             std::string str; std::cin >> str;
             a_counter.go();
         }
@@ -87,16 +87,23 @@ int main(int argc, char* argv[])
             a_counter.wait_go();
         }
             
-        a_counter.inc(1); templet::env::delay(1.0); 
+        a_counter.inc(1);
+        
         { 
             std::unique_lock<std::mutex> lock(mut);
             std::cout << "local process #" << pid << " finished" << std::endl;
+        }
+
+        if (pid == 0 && master){
+            templet::env::delay(1.0);
+            std::cout << "when all workers are finished, enter something here >";
+            std::string str; std::cin >> str;
         }
     });
 
     if(master){
         counter a_counter(std::string("wal.dat")); //using 'a_counter' as a local object
-        std::cout << "total number of processes: " << a_counter.inc(0) << std::endl;
+        std::cout << "total number of increments: " << a_counter.inc(0) << std::endl;
     }
     
     return EXIT_SUCCESS;
